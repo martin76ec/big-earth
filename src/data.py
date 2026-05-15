@@ -151,10 +151,11 @@ class BigEarthNetDataset(Dataset):
         total_samples = len(indices)
         total_budget = sum(budgets.values()) if budgets else "unlimited"
         print(f"Kept {total_samples} samples (budget: {total_budget})", flush=True)
-        for name, idx in sorted(class_map.items(), key=lambda x: x[1]):
-            cap = budgets.get(name, "∞") if budgets else "∞"
-            used = spent.get(name, 0)
-            print(f"  class {idx}: {name} → {used}/{cap}", flush=True)
+        if budgets is not None:
+            for name, idx in sorted(class_map.items(), key=lambda x: x[1]):
+                cap = budgets.get(name, "∞") if budgets else "∞"
+                used = spent.get(name, 0)
+                print(f"  class {idx}: {name} → {used}/{cap}", flush=True)
 
     def __len__(self) -> int:
         return len(self.indices)

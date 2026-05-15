@@ -33,8 +33,8 @@ from src.classifier import LinearProbe, build_loss, compute_pos_weights
 
 SEED = 42
 BATCH_SIZE = 64
-PRETRAIN_EPOCHS = 10
-PROBE_EPOCHS = 20
+PRETRAIN_EPOCHS = 100
+PROBE_EPOCHS = 30
 LR_PRETRAIN = 1e-3
 LR_PROBE = 1e-2
 EVAL_EVERY = 1  # evaluate every N epochs
@@ -49,14 +49,13 @@ def set_seed(seed: int) -> None:
 
 
 def make_dataloaders(batch_size: int) -> tuple[DataLoader, DataLoader, DataLoader]:
-    """Build train/val/test dataloaders with reduced budget for speed."""
+    """Build train/val/test dataloaders — full dataset, no budget cap."""
     class_map = load_class_map()
-    budgets = load_budgets()
 
-    # Use same reduced budget for all splits for fast iteration
-    train_ds = BigEarthNetDataset("train", class_map, budgets=budgets, transform=train_transform)
-    val_ds = BigEarthNetDataset("val", class_map, budgets=budgets, transform=eval_transform)
-    test_ds = BigEarthNetDataset("test", class_map, budgets=budgets, transform=eval_transform)
+    # Full dataset for all splits — no budget filtering
+    train_ds = BigEarthNetDataset("train", class_map, budgets=None, transform=train_transform)
+    val_ds = BigEarthNetDataset("val", class_map, budgets=None, transform=eval_transform)
+    test_ds = BigEarthNetDataset("test", class_map, budgets=None, transform=eval_transform)
 
     train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0)
     val_dl = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0)
