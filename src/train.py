@@ -32,7 +32,7 @@ from src.classifier import LinearProbe, build_loss, compute_pos_weights
 # ── Config ──────────────────────────────────────────────
 
 SEED = 42
-BATCH_SIZE = 64
+BATCH_SIZE = 256      # 64 for 8GB GPU, 256 for 80GB GPU (H200)
 PRETRAIN_EPOCHS = 100
 PROBE_EPOCHS = 30
 LR_PRETRAIN = 1e-3
