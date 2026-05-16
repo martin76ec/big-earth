@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from pathlib import Path
+import os
 
 import torch
 from datasets import load_dataset
@@ -48,15 +49,25 @@ eval_transform = v2.Compose(
 )
 
 
+def _is_main_process() -> bool:
+    """Only rank 0 should print in DDP."""
+    return int(os.environ.get("RANK", "0")) == 0
+
+
+def _log(msg: str) -> None:
+    if _is_main_process():
+        print(msg, flush=True)
+
+
 def load_split(split: str):
     """Load a dataset split, downloading to cache on first call.
 
     Uses HuggingFace's built-in caching — downloads once, loads from
     local Arrow files thereafter. No manual save_to_disk needed.
     """
-    print(f"  Loading {split} split ...", flush=True)
+    _log(f"  Loading {split} split ...")
     ds = load_dataset(DATASET_NAME, split=split, cache_dir=str(CACHE_DIR))
-    print(f"  {split}: {len(ds)} samples loaded", flush=True)
+    _log(f"  {split}: {len(ds)} samples loaded")
     return ds
 
 
@@ -125,7 +136,7 @@ class BigEarthNetDataset(Dataset):
         for i, sample in enumerate(ds):
             scanned += 1
             if scanned % 50000 == 0:
-                print(f"  scanned {scanned:,}, kept {len(indices):,} ...", flush=True)
+                _log(f"  scanned {scanned:,}, kept {len(indices):,} ...")
 
             label_names = sample["labels"]
             top_labels = [l for l in label_names if l in class_map]
@@ -153,12 +164,12 @@ class BigEarthNetDataset(Dataset):
         self.indices = indices
         total_samples = len(indices)
         total_budget = sum(budgets.values()) if budgets else "unlimited"
-        print(f"Kept {total_samples} samples (budget: {total_budget})", flush=True)
+        _log(f"Kept {total_samples} samples (budget: {total_budget})")
         if budgets is not None:
             for name, idx in sorted(class_map.items(), key=lambda x: x[1]):
                 cap = budgets.get(name, "∞") if budgets else "∞"
                 used = spent.get(name, 0)
-                print(f"  class {idx}: {name} → {used}/{cap}", flush=True)
+                _log(f"  class {idx}: {name} → {used}/{cap}")
 
     def __len__(self) -> int:
         return len(self.indices)
