@@ -30,6 +30,7 @@ from src.data import (
     BigEarthNetDataset,
     load_class_map,
     load_budgets,
+    load_split,
     train_transform,
     eval_transform,
 )
@@ -465,6 +466,16 @@ def main() -> None:
     log(f"DDP: {ddp_mode}")
     log(f"Head type: {HEAD_TYPE}")
     log(f"Data mode: {DATA_MODE}")
+
+    # Prevent multi-rank HuggingFace cache races:
+    # rank 0 pre-caches splits once, then all ranks proceed.
+    if ddp_mode:
+        if is_main_process():
+            log("Pre-caching dataset splits on rank 0 before DDP loaders...")
+            for split in ["train", "val", "test"]:
+                load_split(split)
+            log("Pre-cache complete.")
+        dist.barrier()
 
     # Build dataloaders
     train_dl, val_dl, test_dl, train_sampler = make_dataloaders(
