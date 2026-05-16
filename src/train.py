@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import warnings
 from pathlib import Path
 
 import torch
@@ -35,6 +36,13 @@ from src.data import (
 from src.encoder import IJEPLEncoder, EMBED_DIM
 from src.predictor import IJEPAPredictor, MultiBlockMasking, ijepa_loss
 from src.classifier import LinearProbe, MLPHead, build_loss, compute_pos_weights
+
+# Suppress known driver-version warning on restricted servers.
+warnings.filterwarnings(
+    "ignore",
+    message=".*The NVIDIA driver on your system is too old.*",
+    category=UserWarning,
+)
 
 try:
     from sklearn.metrics import average_precision_score
@@ -443,6 +451,11 @@ def main() -> None:
     else:
         rank, world_size = 0, 1
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA is not available. Refusing to run to avoid accidental CPU training."
+        )
 
     log(f"Device: {device}")
     log(f"Seed: {SEED}")
