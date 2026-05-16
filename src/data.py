@@ -29,6 +29,9 @@ STD = (0.229, 0.224, 0.225)
 # Train augmentations
 train_transform = v2.Compose(
     [
+        v2.RandomResizedCrop(size=(120, 120), scale=(0.8, 1.0), antialias=True),
+        v2.RandomHorizontalFlip(p=0.5),
+        v2.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.02),
         v2.ToImage(),
         v2.ToDtype(torch.float32, scale=True),
         v2.Normalize(mean=MEAN, std=STD),

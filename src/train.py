@@ -34,17 +34,24 @@ from src.data import (
 )
 from src.encoder import IJEPLEncoder, EMBED_DIM
 from src.predictor import IJEPAPredictor, MultiBlockMasking, ijepa_loss
-from src.classifier import LinearProbe, build_loss, compute_pos_weights
+from src.classifier import LinearProbe, MLPHead, build_loss, compute_pos_weights
+
+try:
+    from sklearn.metrics import average_precision_score
+except Exception:
+    average_precision_score = None
 
 # ── Config ──────────────────────────────────────────────
 
 SEED = 42
-BATCH_SIZE_PER_GPU = 256  # 64 for 8GB GPU, 256 for 80GB GPU (H200)
+BATCH_SIZE_PER_GPU = 64  # 64 for 8GB GPU, 256 for 80GB GPU (H200)
 PRETRAIN_EPOCHS = 100
 PROBE_EPOCHS = 30
 LR_PRETRAIN = 1e-3
 LR_PROBE = 1e-2
 EVAL_EVERY = 1  # evaluate every N epochs
+HEAD_TYPE = os.getenv("HEAD_TYPE", "mlp").lower()  # mlp | linear
+DATA_MODE = os.getenv("DATA_MODE", "reduced").lower()  # reduced | full
 
 CHECKPOINT_DIR = Path("checkpoints")
 
@@ -110,13 +117,17 @@ def make_dataloaders(
     batch_size: int,
     ddp: bool = False,
 ) -> tuple[DataLoader, DataLoader, DataLoader]:
-    """Build train/val/test dataloaders — full dataset, no budget cap."""
-    class_map = load_class_map()
+    """Build train/val/test dataloaders.
 
-    # Full dataset for all splits — no budget filtering
-    train_ds = BigEarthNetDataset("train", class_map, budgets=None, transform=train_transform)
-    val_ds = BigEarthNetDataset("val", class_map, budgets=None, transform=eval_transform)
-    test_ds = BigEarthNetDataset("test", class_map, budgets=None, transform=eval_transform)
+    DATA_MODE=reduced -> 5% per-class budget (fast local iteration)
+    DATA_MODE=full    -> full top-5 subset (slower, higher quality)
+    """
+    class_map = load_class_map()
+    budgets = load_budgets() if DATA_MODE == "reduced" else None
+
+    train_ds = BigEarthNetDataset("train", class_map, budgets=budgets, transform=train_transform)
+    val_ds = BigEarthNetDataset("val", class_map, budgets=budgets, transform=eval_transform)
+    test_ds = BigEarthNetDataset("test", class_map, budgets=budgets, transform=eval_transform)
 
     # Samplers: DistributedSampler for DDP, None for single GPU
     train_sampler = DistributedSampler(train_ds, shuffle=True) if ddp else None
@@ -260,7 +271,10 @@ def linear_probe(
     encoder.eval()
 
     # Head + loss
-    head = LinearProbe().to(device)
+    if HEAD_TYPE == "mlp":
+        head = MLPHead().to(device)
+    else:
+        head = LinearProbe().to(device)
     if world_size > 1:
         head = DDP(head, device_ids=[device])
 
@@ -269,7 +283,7 @@ def linear_probe(
     optimizer = torch.optim.Adam(head.parameters(), lr=lr)
 
     log(f"\n{'='*60}")
-    log(f"PHASE 2: Linear Probe ({epochs} epochs, encoder FROZEN, {world_size} GPU(s))")
+    log(f"PHASE 2: Probe ({HEAD_TYPE.upper()} head, {epochs} epochs, encoder FROZEN, {world_size} GPU(s))")
     log(f"{'='*60}")
 
     for epoch in range(epochs):
@@ -400,22 +414,20 @@ def evaluate(
 
 
 def average_precision(targets: torch.Tensor, probs: torch.Tensor) -> float:
-    """Compute Average Precision for a single class."""
-    sorted_indices = torch.argsort(probs, descending=True)
-    sorted_targets = targets[sorted_indices]
-
-    tp_cumsum = torch.cumsum(sorted_targets, dim=0)
-    total_pos = targets.sum().item()
-
-    if total_pos == 0:
+    """Compute Average Precision for a single class using sklearn metric."""
+    y_true = targets.detach().cpu().numpy()
+    y_score = probs.detach().cpu().numpy()
+    if y_true.sum() == 0:
         return 0.0
-
-    num_pred = torch.arange(1, len(sorted_targets) + 1, dtype=torch.float32)
-    precision = tp_cumsum / num_pred
-
-    ap = precision[sorted_targets == 1].mean().item() if (sorted_targets == 1).any() else 0.0
-
-    return ap
+    if average_precision_score is None:
+        # Fallback (should rarely happen once sklearn is installed)
+        sorted_indices = torch.argsort(probs, descending=True)
+        sorted_targets = targets[sorted_indices]
+        tp_cumsum = torch.cumsum(sorted_targets, dim=0)
+        num_pred = torch.arange(1, len(sorted_targets) + 1, dtype=torch.float32)
+        precision = tp_cumsum / num_pred
+        return precision[sorted_targets == 1].mean().item() if (sorted_targets == 1).any() else 0.0
+    return float(average_precision_score(y_true, y_score))
 
 
 # ── Main ────────────────────────────────────────────────
@@ -438,6 +450,8 @@ def main() -> None:
     log(f"Effective batch: {BATCH_SIZE_PER_GPU * world_size}")
     log(f"GPUs: {world_size}")
     log(f"DDP: {ddp_mode}")
+    log(f"Head type: {HEAD_TYPE}")
+    log(f"Data mode: {DATA_MODE}")
 
     # Build dataloaders
     train_dl, val_dl, test_dl, train_sampler = make_dataloaders(
