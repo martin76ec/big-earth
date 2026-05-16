@@ -15,6 +15,7 @@ import os
 
 import torch
 from datasets import load_dataset
+from datasets.utils.logging import disable_progress_bar, set_verbosity_error
 from torch.utils.data import Dataset
 from torchvision.transforms import v2
 
@@ -59,12 +60,20 @@ def _log(msg: str) -> None:
         print(msg, flush=True)
 
 
+def _configure_hf_logging_for_rank() -> None:
+    """Silence HF datasets progress/logging for non-main DDP ranks."""
+    if not _is_main_process():
+        disable_progress_bar()
+        set_verbosity_error()
+
+
 def load_split(split: str):
     """Load a dataset split, downloading to cache on first call.
 
     Uses HuggingFace's built-in caching — downloads once, loads from
     local Arrow files thereafter. No manual save_to_disk needed.
     """
+    _configure_hf_logging_for_rank()
     _log(f"  Loading {split} split ...")
     ds = load_dataset(DATASET_NAME, split=split, cache_dir=str(CACHE_DIR))
     _log(f"  {split}: {len(ds)} samples loaded")
